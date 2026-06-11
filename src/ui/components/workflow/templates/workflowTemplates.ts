@@ -104,6 +104,103 @@ export function instantiateTemplate(tpl: WorkflowTemplate): {
   return { nodes, edges };
 }
 
+// ── Long prompts (kept outside the array for readability) ─────────────────────
+
+/** System prompt: AI đóng vai khách thuê trọ, vừa soạn tin nhắn tự nhiên vừa extract data dạng JSON */
+const ROOM_HUNTER_SYSTEM_PROMPT = `Bạn là trợ lý đang soạn tin nhắn thay cho một người đang tìm thuê phòng trọ/căn hộ mini.
+
+Nhiệm vụ của bạn có 2 phần:
+1. Tạo tin nhắn tự nhiên để gửi cho sale/chủ trọ.
+2. Cập nhật dữ liệu phòng trọ đã lấy được từ đoạn chat.
+
+Vai trò trong hội thoại:
+- Nói chuyện như một khách thuê thật sự đang cân nhắc phòng.
+- Mục tiêu bên ngoài là hỏi thông tin để xem phòng có phù hợp nhu cầu thuê hay không.
+- Không nói rằng bạn đang collect data, tạo database, làm CRM, làm app, nghiên cứu thị trường, hoặc tổng hợp thông tin cho bên thứ ba.
+- Không giả danh một người cụ thể nếu chưa được cung cấp thông tin.
+- Không nói dối nếu bị hỏi trực tiếp. Nếu bị hỏi mục đích, nói ngắn gọn: "Em đang tìm phòng nên hỏi kỹ chút để xem có phù hợp không ạ."
+- Không cam kết thuê, không hứa đặt cọc, không tạo cảm giác chắc chắn thuê nếu chưa có quyết định.
+- Không hỏi thông tin nhạy cảm không liên quan đến việc thuê phòng.
+
+Phong cách tin nhắn gửi sale:
+- Tự nhiên, lịch sự, giống người Việt đang đi thuê phòng.
+- Câu ngắn, dễ hiểu.
+- Có thể dùng "dạ", "anh/chị", "em".
+- Không hỏi quá 3-4 ý trong một tin nhắn.
+- Không lặp lại thông tin đã hỏi hoặc đã có.
+- Ưu tiên hỏi field còn thiếu quan trọng nhất.
+- Nếu sale trả lời thiếu, hỏi tiếp nhẹ nhàng.
+- Nếu sale gửi nhiều thông tin, cảm ơn rồi hỏi phần còn thiếu.
+- Nếu sale từ chối cung cấp thêm, không ép.
+
+Thứ tự hỏi nên tự nhiên:
+- Đầu tiên hỏi phòng còn không, giá, địa chỉ.
+- Sau đó hỏi cọc, ngày vào ở, diện tích.
+- Tiếp theo hỏi nội thất, toilet/bếp riêng, máy lạnh, gác.
+- Sau đó hỏi phí điện/nước/wifi/xe/dịch vụ.
+- Cuối cùng hỏi hình/video, giờ giấc, an ninh, thú cưng, lịch xem phòng.
+
+Quy tắc extract:
+- Chỉ lấy thông tin có trong hội thoại.
+- Không tự suy đoán.
+- Nếu thiếu thì để null.
+- Nếu là danh sách thì dùng array.
+- Boolean dùng true/false/null.
+- Nếu có nhiều phòng, tách thành nhiều object trong mảng rooms.
+- Chuẩn hóa giá tiền thành số VND nếu đủ thông tin.
+- Nếu giá mơ hồ, giữ nguyên text trong notes.
+- Không bỏ mất thông tin quan trọng sale đã nói.
+- Khi đã đủ thông tin quan trọng hoặc sale không muốn cung cấp thêm, đặt should_continue_chat = false và message_to_send là lời cảm ơn kết thúc lịch sự.
+
+Output luôn là JSON hợp lệ, không markdown, không code fence, không giải thích.
+
+Schema output:
+
+{
+  "message_to_send": "",
+  "updated_data": {
+    "rooms": [
+      {
+        "property_name": null,
+        "address": null,
+        "ward": null,
+        "district": null,
+        "city": null,
+        "rent_price": null,
+        "deposit": null,
+        "area_m2": null,
+        "max_people": null,
+        "availability_status": null,
+        "available_from": null,
+        "furniture": [],
+        "has_air_conditioner": null,
+        "has_mezzanine": null,
+        "has_private_kitchen": null,
+        "has_private_bathroom": null,
+        "curfew_policy": null,
+        "electricity_fee": null,
+        "water_fee": null,
+        "wifi_fee": null,
+        "parking_fee": null,
+        "other_fees": null,
+        "parking_available": null,
+        "has_elevator": null,
+        "security": null,
+        "pet_policy": null,
+        "images": [],
+        "video_url": null,
+        "google_maps_url": null,
+        "contact_name": null,
+        "contact_phone": null,
+        "zalo": null,
+        "notes": null
+      }
+    ]
+  },
+  "missing_important_fields": [],
+  "should_continue_chat": true
+}`;
+
 // ── Templates ──────────────────────────────────────────────────────────────────
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
@@ -1283,6 +1380,61 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       { id: 'e3', source: 'n3', target: 'n4' },
       { id: 'e4', source: 'n4', target: 'n5' },
       { id: 'e5', source: 'n5', target: 'n6' },
+    ],
+  },
+
+  // ━━━━━ 41. Săn data nhà trọ: AI đóng vai khách thuê + ghi Sheets ━━━━━━━━━━
+  {
+    id: 'tpl-room-hunter-ai',
+    name: 'Săn data nhà trọ (AI đóng vai khách thuê)',
+    description: 'AI tự động chat với sale/chủ trọ như một khách thuê thật: hỏi giá, cọc, diện tích, phí điện nước, nội thất... rồi extract data và ghi vào Google Sheets. AI tự dừng hỏi khi đã đủ thông tin. ⚠️ Lưu ý: workflow kích hoạt với MỌI tin nhắn chat riêng đến — nên chạy trên tài khoản Zalo chuyên dùng đi tìm trọ. Cần tạo sheet với các cột: Thời gian, Sale, Địa chỉ, Quận, TP, Giá thuê, Cọc, Diện tích, Điện, Nước, Wifi, Gửi xe, WC riêng, Nội thất, SĐT, Ghi chú, Còn thiếu, JSON đầy đủ.',
+    category: 'ai',
+    tags: ['nhà trọ', 'thu thập data', 'AI', 'Google Sheets', 'auto reply', 'extract'],
+    icon: '🏠',
+    difficulty: 'advanced',
+    nodes: [
+      { id: 'n1', type: 'trigger.message', label: 'Khi sale/chủ trọ nhắn tin', position: { x: 300, y: 40 },
+        config: { ...DEFAULT_CONFIGS['trigger.message'], threadType: 'user', ignoreOwn: true, debounceSeconds: 20 } },
+      { id: 'n2', type: 'logic.stopIf', label: 'Bỏ qua tin rỗng', position: { x: 300, y: 180 },
+        config: { left: '{{ $trigger.content }}', operator: 'equals', right: '' } },
+      { id: 'n3', type: 'zalo.getMessageHistory', label: 'Lấy lịch sử hội thoại', position: { x: 300, y: 320 },
+        config: { threadId: '{{ $trigger.threadId }}', count: 30 } },
+      { id: 'n4', type: 'ai.generateText', label: 'AI soạn tin + extract data', position: { x: 300, y: 460 },
+        config: {
+          aiConfigMode: 'manual', assistantId: '', platform: 'openai', apiKey: '', model: 'gpt-5.4-mini',
+          systemPrompt: ROOM_HUNTER_SYSTEM_PROMPT,
+          prompt: 'Đây là lịch sử hội thoại gần nhất (JSON thô từ Zalo, isSelf=true nghĩa là tin nhắn của em — người đang đi tìm phòng):\n\n{{ $node.n3.output }}\n\nTin nhắn mới nhất từ sale/chủ trọ ({{ $trigger.fromName }}):\n\n{{ $trigger.content }}\n\nHãy tạo tin nhắn tiếp theo phù hợp và cập nhật dữ liệu theo đúng schema JSON. Chỉ trả về JSON hợp lệ.',
+          maxTokens: 2000, temperature: 0.6,
+        } },
+      { id: 'n5', type: 'data.jsonParse', label: 'Đọc JSON từ AI', position: { x: 300, y: 600 },
+        config: { input: '{{ $node.n4.output }}' } },
+      { id: 'n6', type: 'logic.stopIf', label: 'Dừng nếu JSON lỗi', position: { x: 300, y: 740 },
+        config: { left: '{{ $node.n5.error }}', operator: 'equals', right: 'JSON parse failed' } },
+      { id: 'n7', type: 'data.textFormat', label: 'Soạn dòng dữ liệu', position: { x: 300, y: 880 },
+        config: { template: '{{ $date.now }}\t{{ $trigger.fromName }}\t{{ $node.n5.data.updated_data.rooms[0].address }}\t{{ $node.n5.data.updated_data.rooms[0].district }}\t{{ $node.n5.data.updated_data.rooms[0].city }}\t{{ $node.n5.data.updated_data.rooms[0].rent_price }}\t{{ $node.n5.data.updated_data.rooms[0].deposit }}\t{{ $node.n5.data.updated_data.rooms[0].area_m2 }}\t{{ $node.n5.data.updated_data.rooms[0].electricity_fee }}\t{{ $node.n5.data.updated_data.rooms[0].water_fee }}\t{{ $node.n5.data.updated_data.rooms[0].wifi_fee }}\t{{ $node.n5.data.updated_data.rooms[0].parking_fee }}\t{{ $node.n5.data.updated_data.rooms[0].has_private_bathroom }}\t{{ $node.n5.data.updated_data.rooms[0].furniture }}\t{{ $node.n5.data.updated_data.rooms[0].contact_phone }}\t{{ $node.n5.data.updated_data.rooms[0].notes }}\t{{ $node.n5.data.missing_important_fields }}\t{{ $node.n4.output }}' } },
+      { id: 'n8', type: 'sheets.appendRow', label: 'Ghi vào Google Sheets', position: { x: 300, y: 1020 },
+        config: { spreadsheetId: '', sheetName: 'NhaTro', values: '{{ $node.n7.output }}', serviceAccountPath: '' } },
+      { id: 'n9', type: 'logic.if', label: 'Còn cần hỏi tiếp?', position: { x: 300, y: 1160 },
+        config: { left: '{{ $node.n5.data.should_continue_chat }}', operator: 'equals', right: 'true' } },
+      { id: 'n10', type: 'zalo.sendTyping', label: 'Hiệu ứng đang gõ', position: { x: 120, y: 1320 },
+        config: { ...DEFAULT_CONFIGS['zalo.sendTyping'], delaySeconds: 4 } },
+      { id: 'n11', type: 'zalo.sendMessage', label: 'Gửi tin cho sale', position: { x: 120, y: 1460 },
+        config: { ...DEFAULT_CONFIGS['zalo.sendMessage'], message: '{{ $node.n5.data.message_to_send }}' } },
+      { id: 'n12', type: 'output.log', label: 'Đã đủ data — dừng hỏi', position: { x: 520, y: 1320 },
+        config: { message: 'Đã thu thập đủ thông tin nhà trọ từ {{ $trigger.fromName }}. Còn thiếu: {{ $node.n5.data.missing_important_fields }}', level: 'info' } },
+    ],
+    edges: [
+      { id: 'e1',  source: 'n1', target: 'n2' },
+      { id: 'e2',  source: 'n2', target: 'n3' },
+      { id: 'e3',  source: 'n3', target: 'n4' },
+      { id: 'e4',  source: 'n4', target: 'n5' },
+      { id: 'e5',  source: 'n5', target: 'n6' },
+      { id: 'e6',  source: 'n6', target: 'n7' },
+      { id: 'e7',  source: 'n7', target: 'n8' },
+      { id: 'e8',  source: 'n8', target: 'n9' },
+      { id: 'e9',  source: 'n9', sourceHandle: 'true', target: 'n10' },
+      { id: 'e10', source: 'n10', target: 'n11' },
+      { id: 'e11', source: 'n9', sourceHandle: 'false', target: 'n12' },
     ],
   },
 ];
