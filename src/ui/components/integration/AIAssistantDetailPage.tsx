@@ -18,6 +18,7 @@ const PLATFORMS = [
   { value: 'deepseek', label: 'DeepSeek',        icon: '🔮', color: 'bg-purple-600' },
   { value: 'grok',     label: 'Grok (xAI)',      icon: '⚡', color: 'bg-orange-600' },
   { value: 'mistral',  label: 'Mistral AI',      icon: '🌀', color: 'bg-sky-600' },
+  { value: 'openrouter', label: 'OpenRouter',    icon: '🔀', color: 'bg-indigo-600' },
 ] as const;
 
 const MODELS_BY_PLATFORM: Record<string, { value: string; label: string }[]> = {
@@ -69,6 +70,16 @@ const MODELS_BY_PLATFORM: Record<string, { value: string; label: string }[]> = {
     { value: 'mistral-medium-latest',   label: 'Mistral Medium (cân bằng)' },
     { value: 'open-mistral-nemo-2',     label: 'Mistral Nemo 2 (mở, nhẹ)' },
     { value: 'mistral-large-latest',    label: 'Mistral Large (legacy)' },
+  ],
+  openrouter: [
+    { value: 'openrouter/auto',             label: 'Auto Router (tự chọn model tốt nhất — khuyên dùng)' },
+    { value: 'openai/gpt-5.4-mini',         label: 'GPT-5.4 Mini (OpenAI qua OpenRouter)' },
+    { value: 'anthropic/claude-4.6-sonnet', label: 'Claude 4.6 Sonnet (Anthropic qua OpenRouter)' },
+    { value: 'google/gemini-3.5-flash',     label: 'Gemini 3.5 Flash (Google qua OpenRouter)' },
+    { value: 'deepseek/deepseek-v4-flash',  label: 'DeepSeek V4 Flash (rẻ, nhanh)' },
+    { value: 'meta-llama/llama-4-maverick', label: 'Llama 4 Maverick (Meta, open-source)' },
+    { value: 'qwen/qwen3-max',              label: 'Qwen3 Max (Alibaba)' },
+    { value: 'mistralai/mistral-large-2',   label: 'Mistral Large 2' },
   ],
 };
 
@@ -651,6 +662,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 {platform === 'deepseek' && 'Lấy tại: platform.deepseek.com/api-keys'}
                 {platform === 'grok' && 'Lấy tại: console.x.ai'}
                 {platform === 'mistral' && 'Lấy tại: console.mistral.ai/api-keys'}
+                {platform === 'openrouter' && 'Lấy tại: openrouter.ai/settings/keys'}
               </p>
             </div>
           </div>

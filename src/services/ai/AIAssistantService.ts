@@ -15,7 +15,7 @@ import Logger from '../../utils/Logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AIPlatform = 'openai' | 'gemini' | 'claude' | 'deepseek' | 'grok' | 'mistral';
+export type AIPlatform = 'openai' | 'gemini' | 'claude' | 'deepseek' | 'grok' | 'mistral' | 'openrouter';
 
 export interface AIAssistant {
   id: string;
@@ -77,11 +77,12 @@ function decryptApiKey(raw: string): string {
 
 function getOpenAICompatibleUrl(platform: string): string {
   switch (platform) {
-    case 'deepseek': return 'https://api.deepseek.com/v1/chat/completions';
-    case 'grok':     return 'https://api.x.ai/v1/chat/completions';
-    case 'mistral':  return 'https://api.mistral.ai/v1/chat/completions';
+    case 'deepseek':   return 'https://api.deepseek.com/v1/chat/completions';
+    case 'grok':       return 'https://api.x.ai/v1/chat/completions';
+    case 'mistral':    return 'https://api.mistral.ai/v1/chat/completions';
+    case 'openrouter': return 'https://openrouter.ai/api/v1/chat/completions';
     case 'openai':
-    default:         return 'https://api.openai.com/v1/chat/completions';
+    default:           return 'https://api.openai.com/v1/chat/completions';
   }
 }
 
