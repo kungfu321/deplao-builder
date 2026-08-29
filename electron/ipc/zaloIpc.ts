@@ -79,6 +79,57 @@ function resolveAuthFromConnection(auth: any, zaloId: string): any {
     return auth;
 }
 
+function normalizeZaloLabelData(labelData: any): any {
+    if (!Array.isArray(labelData)) return labelData;
+
+    const usedIds = new Set<number>();
+    return labelData.map((label: any, index: number) => {
+        const numericId = typeof label?.id === 'number'
+            ? label.id
+            : (typeof label?.id === 'string' && label.id.trim() !== '' ? Number(label.id) : NaN);
+
+        if (Number.isFinite(numericId) && !usedIds.has(numericId)) {
+            usedIds.add(numericId);
+            return { ...label, id: numericId };
+        }
+
+        let syntheticId = -(index + 1);
+        while (usedIds.has(syntheticId)) syntheticId--;
+        usedIds.add(syntheticId);
+        return { ...label, id: syntheticId };
+    });
+}
+
+function normalizeZaloLabelsResult(result: any): any {
+    if (!result || typeof result !== 'object') return result;
+    if (Array.isArray(result)) return normalizeZaloLabelData(result);
+    if (Array.isArray(result.labelData)) {
+        return { ...result, labelData: normalizeZaloLabelData(result.labelData) };
+    }
+    if (Array.isArray(result.data?.labelData)) {
+        return {
+            ...result,
+            data: { ...result.data, labelData: normalizeZaloLabelData(result.data.labelData) },
+        };
+    }
+    return result;
+}
+
+function normalizeZaloLabelsIpcResult(result: any): any {
+    if (!result || typeof result !== 'object') return result;
+    return { ...result, response: normalizeZaloLabelsResult(result.response) };
+}
+
+function stripSyntheticZaloLabelIds(labelData: any): any {
+    if (!Array.isArray(labelData)) return labelData;
+    return labelData.map((label: any) => {
+        if (!label || typeof label !== 'object') return label;
+        if (typeof label.id !== 'number' || label.id >= 0) return label;
+        const { id, ...rest } = label;
+        return rest;
+    });
+}
+
 /**
  * Upload local media files from Employee machine to Boss storage before proxying.
  * Employee's local file paths are invalid on Boss - reads each file on the
@@ -513,7 +564,8 @@ export function registerZaloIpc() {
                     if (!HttpConnectionManager.getInstance().isConnected(activeWs.id)) {
                         return { success: false, error: 'Chưa kết nối tới BOSS', response: { labelData: [] } };
                     }
-                    return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:getLabels', params);
+                    const proxyResult = await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:getLabels', params);
+                    return normalizeZaloLabelsIpcResult(proxyResult);
                 }
                 let { auth, _fromRelay } = params;
                 if (!auth) return { success: false, error: 'Missing auth' };
@@ -522,7 +574,7 @@ export function registerZaloIpc() {
                 const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth), false);
                 const result = await service.getLabels();
                 Logger.info(`[zaloIpc] zalo:getLabels ✅ got ${result?.labelData?.length ?? 0} labels`);
-                return { success: true, response: result };
+                return { success: true, response: normalizeZaloLabelsResult(result) };
             } catch (error: any) {
                 Logger.error('[zaloIpc] zalo:getLabels error:', error);
                 return { success: false, error: error?.message || String(error) };
@@ -541,7 +593,11 @@ export function registerZaloIpc() {
                     if (!HttpConnectionManager.getInstance().isConnected(activeWs.id)) {
                         return { success: false, error: 'Chưa kết nối tới BOSS' };
                     }
-                    return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:updateLabels', params);
+                    const proxyResult = await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:updateLabels', {
+                        ...params,
+                        labelData: stripSyntheticZaloLabelIds(params?.labelData),
+                    });
+                    return normalizeZaloLabelsIpcResult(proxyResult);
                 }
                 let { auth, isReconnection = false, _fromRelay, labelData, version, labelDiffs, ...rest } = params;
             if (!auth) return { error: 'Missing auth' };
@@ -554,7 +610,7 @@ export function registerZaloIpc() {
 
             auth = resolveAuthFromConnection(auth, zaloId);
             const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth), isReconnection);
-            const result = await service.updateLabels(labelData, version);
+            const result = await service.updateLabels(stripSyntheticZaloLabelIds(labelData), version);
 
             // Centralized workflow label event emission
             if (Array.isArray(labelDiffs) && labelDiffs.length > 0 && zaloId) {
@@ -578,7 +634,7 @@ export function registerZaloIpc() {
                 }
             }
 
-            return { success: true, response: result };
+            return { success: true, response: normalizeZaloLabelsResult(result) };
         } catch (error: any) {
             const errorMsg = error?.message || error?.toString() || 'Unknown error';
             Logger.error(`[zaloIpc] zalo:updateLabels error:`, error);
